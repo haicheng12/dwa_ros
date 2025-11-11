@@ -16,7 +16,9 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
-add_executable(dwa_test_node src/dwa.cpp)
+add_executable(dwa_test_node 
+  src/dwa_node.cpp
+  src/dwa.cpp)
 target_link_libraries(dwa_test_node
   ${catkin_LIBRARIES}
 )

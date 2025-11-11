@@ -1,8 +1,10 @@
 #include <ros/ros.h>
-#include <nav_msgs/Odometry.h>
-#include <sensor_msgs/LaserScan.h>
-#include <geometry_msgs/Twist.h>
-#include <geometry_msgs/PoseStamped.h>
+#include <nav_msgs/Odometry.h>         //里程计
+#include <nav_msgs/Path.h>             //路径
+#include <sensor_msgs/LaserScan.h>     //激光
+#include <geometry_msgs/Twist.h>       //速度
+#include <geometry_msgs/PoseStamped.h> //位置
+#include <visualization_msgs/Marker.h> //显示marker
 #include <tf/tf.h>
 
 #include <tf2/LinearMath/Quaternion.h> // 四元数转欧拉角
@@ -10,12 +12,10 @@
 #include <geometry_msgs/Quaternion.h>
 #include <tf/transform_broadcaster.h>
 
+#include <iostream>
 #include <vector>
 #include <cmath>
 #include <algorithm>
-#include <iostream>
-
-#include <visualization_msgs/Marker.h>
 
 // 机器人参数配置
 struct RobotParams
@@ -55,22 +55,6 @@ struct Obstacle
     double y;
 };
 
-// 定义离散点结构体（x, y, z坐标）
-struct Point
-{
-    double x, y, z;
-    Point(double x_, double y_, double z_ = 0.0) : x(x_), y(y_), z(z_) {}
-};
-
-// 定义轨迹（由多个点组成）
-struct Trajectory
-{
-    std::vector<Point> points; // 轨迹点集
-    std::string name;          // 轨迹名称（用于标注）
-    double r, g, b;            // 轨迹颜色
-    double line_width;         // 线宽
-};
-
 class DWA
 {
 public:
@@ -100,6 +84,8 @@ private:
     // void scanCallback(const sensor_msgs::LaserScan::ConstPtr &msg);
     // 目标点回调：更新目标位姿
     void goalCallback(const geometry_msgs::PoseStamped::ConstPtr &msg);
+    // 路径回调：接收全局路径
+    void pathCallback(const nav_msgs::Path::ConstPtr &msg);
 
     Pose current_pose_;                                          // 当前位姿
     Velocity current_vel_;                                       // 当前速度
@@ -108,8 +94,13 @@ private:
 
     RobotParams params_; // 机器人参数
 
+    std::vector<Pose> coverage_path_; // 全局路径
+
+    double vel_cost_data_ = 0.0;
+
+    bool has_scan_ = false; // 是否收到激光数据
     bool has_goal_ = false; // 是否收到目标点
-    bool has_scan_ = true;  // 是否收到激光数据
+    bool has_path_ = false; // 是否收到路径点
 
 protected:
     ros::NodeHandle nh_; // ros节点
@@ -117,6 +108,7 @@ protected:
     ros::Subscriber odom_sub_; // 订阅里程计
     ros::Subscriber scan_sub_; // 订阅激光雷达
     ros::Subscriber goal_sub_; // 订阅目标点
+    ros::Subscriber path_sub_; // 订阅路径
 
     ros::Publisher cmd_pub_;    // 发布速度指令
     ros::Publisher marker_pub_; // Marker发布器

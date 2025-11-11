@@ -6,6 +6,7 @@ DWA::DWA()
     odom_sub_ = nh_.subscribe("/odom", 1, &DWA::odomCallback, this);
     // scan_sub_ = nh_.subscribe("/scan", 1, &DWA::scanCallback, this);
     goal_sub_ = nh_.subscribe("/move_base_simple/goal", 1, &DWA::goalCallback, this);
+    path_sub_ = nh_.subscribe("/coverage_path", 1, &DWA::pathCallback, this);
 
     cmd_pub_ = nh_.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
     marker_pub_ = nh_.advertise<visualization_msgs::Marker>("/sample_trajectory", 10);
@@ -76,6 +77,31 @@ void DWA::goalCallback(const geometry_msgs::PoseStamped::ConstPtr &msg)
     // ROS_INFO("收到目标点: (%.2f, %.2f, %.2f°)", goal_.x, goal_.y, goal_.theta * 180 / M_PI);
 }
 
+// 路径回调：接收全局路径
+void DWA::pathCallback(const nav_msgs::Path::ConstPtr &msg)
+{
+    static bool flag = true;
+    if (flag)
+    {
+        flag = false;
+
+        nav_msgs::Path path = *msg;
+
+        // 遍历存储到容器
+        for (int i = 0; i < path.poses.size(); ++i)
+        {
+            Pose temp_pose;
+            temp_pose.x = path.poses[i].pose.position.x;
+            temp_pose.y = path.poses[i].pose.position.y;
+
+            coverage_path_.push_back(temp_pose);
+        }
+        // std::cout << "成功接收到全局路径" << std::endl;
+
+        has_path_ = true;
+    }
+}
+
 // 核心入口：输入当前状态、目标、障碍物，输出最优速度
 Velocity DWA::solve(const Pose &current_pose, const Velocity &current_vel,
                     const Pose &goal, const std::vector<Obstacle> &obstacles)
@@ -128,7 +154,7 @@ Velocity DWA::solve(const Pose &current_pose, const Velocity &current_vel,
             marker.points.push_back(pt);
         }
         marker.lifetime = ros::Duration(0);
-        marker_pub_.publish(marker);
+        marker_pub_.publish(marker); // 预测轨迹发布显示
 
         // 评价轨迹得分
         double score = evaluateTrajectory(traj, goal, obstacles);
@@ -220,7 +246,7 @@ double DWA::evaluateTrajectory(const std::vector<Pose> &trajectory, const Pose &
 {
     // 权重配置（可通过实验调优）
     double w_heading = 2.0; // 朝向权重
-    double w_dist = 3.0;    // 避障距离权重
+    double w_dist = 1.0;    // 避障距离权重
     double w_vel = 1.0;     // 速度权重
 
     // 4.1 朝向评价（轨迹终点与目标的航向偏差）
@@ -228,7 +254,7 @@ double DWA::evaluateTrajectory(const std::vector<Pose> &trajectory, const Pose &
     double goal_theta = atan2(goal.y - end_pose.y, goal.x - end_pose.x);
     double heading_err = fabs(end_pose.theta - goal_theta);
     double heading_cost = 1.0 - heading_err / M_PI; // 得分0~1
-    // std::cout << "朝向评价 = " << heading_cost << std::endl;
+    std::cout << "朝向评价 = " << heading_cost << std::endl;
 
     // 4.2 避障距离评价（轨迹与障碍物的最小距离）
     // double min_dist = 1e9;
@@ -240,19 +266,22 @@ double DWA::evaluateTrajectory(const std::vector<Pose> &trajectory, const Pose &
     //         min_dist = std::min(min_dist, dist);
     //     }
     // }
-    double dist_cost = 0.0; // std::min(min_dist / params_.safe_dist, 1.0); // 得分0~1
-    // std::cout << "避障距离评价 = " << dist_cost << std::endl;
+    // double dist_cost = std::min(min_dist / params_.safe_dist, 1.0); // 得分0~1
+    // double dist = sqrt(pow(end_pose.x - goal.x, 2) + pow(end_pose.y - goal.y, 2));
+    // double dist_cost = dist;
+    // std::cout << "距离评价 = " << dist_cost << std::endl;
 
     // 4.3 速度评价（线速度接近最大速度的程度）
-    double vel = (trajectory[1].x - trajectory[0].x) / params_.dt; // 提取线速度
-    // std::cout << "vel = " << vel << std::endl;
-    double vel_cost = vel / params_.max_v; // 得分0~1
-    // double vel_cost = std::max(0.0, vel) / params_.max_v; // 正向速度优先
-    // std::cout << "速度评价 = " << vel_cost << std::endl;
+    double vel = (sqrt(pow(trajectory.back().x - trajectory.front().x, 2) + pow(trajectory.back().y - trajectory.front().y, 2))) / params_.predict_time; // 提取线速度
+    std::cout << "vel = " << vel << std::endl;
+    // double vel_cost = vel / params_.max_v; // 得分0~1
+    double vel_cost = std::max(0.0, vel) / params_.max_v; // 正向速度优先
+    std::cout << "速度评价 = " << vel_cost << std::endl;
+    // vel_cost_data_ = vel_cost;
 
     // 总得分（加权求和）
-    double all_cost = heading_cost + dist_cost + vel_cost;
-    // std::cout << "总评价 = " << all_cost << std::endl;
+    double all_cost = heading_cost * w_heading + vel_cost * w_vel;
+    std::cout << "总评价 = " << all_cost << std::endl;
 
     return all_cost;
 }
@@ -260,6 +289,7 @@ double DWA::evaluateTrajectory(const std::vector<Pose> &trajectory, const Pose &
 // 主循环
 void DWA::run()
 {
+    int index = 0;
     geometry_msgs::Twist cmd; // 速度控制指令
 
     ros::Rate rate(10); // 控制频率
@@ -282,7 +312,7 @@ void DWA::run()
 
             cmd.linear.x = optimal_vel.v;
             cmd.angular.z = optimal_vel.omega;
-            // std::cout << "速度 = " << cmd.linear.x << " " << cmd.angular.z << std::endl;
+            std::cout << "速度 = " << cmd.linear.x << " " << cmd.angular.z << std::endl;
             cmd_pub_.publish(cmd); // 发布速度指令
 
             // 检查是否到达目标（距离阈值0.2m）
@@ -299,19 +329,72 @@ void DWA::run()
             }
         }
 
+        // if (has_path_) // 接收到路径点
+        // {
+        //     // std::cout << "size = " << coverage_path_.size() << std::endl; // 11
+        //     // for (int i = 0; i < coverage_path_.size(); ++i)
+        //     // {
+        //     //     double goal_x = coverage_path_[i].x;
+        //     //     double goal_y = coverage_path_[i].y;
+        //     //     // 打印点
+        //     //     std::cout << "位置 = " << goal_x << " " << goal_y << std::endl;
+        //     // }
+
+        //     double goal_x = coverage_path_[index].x;
+        //     double goal_y = coverage_path_[index].y;
+        //     // 打印点
+        //     // std::cout << "位置 = " << goal_x << " " << goal_y << std::endl;
+
+        //     Pose current_goal;
+        //     current_goal.x = goal_x;
+        //     current_goal.y = goal_y;
+
+        //     // 求解DWA得到最优速度
+        //     Velocity optimal_vel = solve(current_pose_, current_vel_, current_goal, obstacles_);
+
+        //     // 执行速度指令，更新当前状态
+        //     current_pose_.x += optimal_vel.v * cos(current_pose_.theta) * params_.dt;
+        //     current_pose_.y += optimal_vel.v * sin(current_pose_.theta) * params_.dt;
+        //     current_pose_.theta += optimal_vel.omega * params_.dt;
+        //     current_vel_ = optimal_vel;
+
+        //     if (vel_cost_data_ < 0.05)
+        //     {
+        //         cmd.linear.x = 0.3;
+        //     }
+        //     else
+        //     {
+        //         cmd.linear.x = optimal_vel.v;
+        //     }
+        //     cmd.angular.z = optimal_vel.omega;
+        //     std::cout << "速度 = " << cmd.linear.x << " " << cmd.angular.z << std::endl;
+        //     cmd_pub_.publish(cmd); // 发布速度指令
+
+        //     std::cout << "index = " << index << std::endl;
+
+        //     // 检查是否到达目标（距离阈值0.2m）
+        //     double dist_to_goal = sqrt(pow(current_pose_.x - current_goal.x, 2) + pow(current_pose_.y - current_goal.y, 2));
+        //     // std::cout << "dist_to_goal = " << dist_to_goal << std::endl;
+        //     if (dist_to_goal < 0.2)
+        //     {
+        //         std::cout << "去下一个目标点！" << std::endl;
+        //         ++index;
+
+        //         if (index == coverage_path_.size() - 1)
+        //         {
+        //             std::cout << "到达终点！" << std::endl;
+
+        //             index = 0;
+
+        //             cmd.linear.x = 0.0;
+        //             cmd.angular.z = 0.0;
+        //             std::cout << "速度 = " << cmd.linear.x << " " << cmd.angular.z << std::endl;
+        //             cmd_pub_.publish(cmd); // 发布速度指令
+        //         }
+        //     }
+        // }
+
         rate.sleep();
         ros::spinOnce();
     }
-}
-
-int main(int argc, char **argv)
-{
-    ros::init(argc, argv, "dwa_ros_test");
-
-    // 2. 初始化DWA算法
-    DWA dwa;
-    // 主循环
-    dwa.run();
-
-    return 0;
 }

@@ -79,24 +79,11 @@ public:
 
     void run();
 
+private:
     // 核心入口：输入当前状态、目标、障碍物，输出最优速度
     Velocity solve(const Pose &current_pose, const Velocity &current_vel,
                    const Pose &goal, const std::vector<Obstacle> &obstacles);
 
-    Pose current_pose_;                                          // 当前位姿
-    Velocity current_vel_;                                       // 当前速度
-    Pose goal_;                                                  // 目标位姿
-    std::vector<Obstacle> obstacles_ = {{0.0, 0.0}, {0.0, 0.0}}; // 障碍物列表
-
-    RobotParams params_; // 机器人参数
-
-    bool has_goal_ = false; // 是否收到目标点
-    bool has_scan_ = true;  // 是否收到激光数据
-
-    ros::Publisher cmd_pub_;    // 发布速度指令
-    ros::Publisher marker_pub_; // Marker发布器
-
-private:
     // 1. 生成动态窗口（可行速度范围）
     std::vector<Velocity> generateDynamicWindow(const Velocity &current_vel);
     // 2. 轨迹预测（基于差速轮运动学模型）
@@ -114,9 +101,23 @@ private:
     // 目标点回调：更新目标位姿
     void goalCallback(const geometry_msgs::PoseStamped::ConstPtr &msg);
 
+    Pose current_pose_;                                          // 当前位姿
+    Velocity current_vel_;                                       // 当前速度
+    Pose goal_;                                                  // 目标位姿
+    std::vector<Obstacle> obstacles_ = {{0.0, 0.0}, {0.0, 0.0}}; // 障碍物列表
+
+    RobotParams params_; // 机器人参数
+
+    bool has_goal_ = false; // 是否收到目标点
+    bool has_scan_ = true;  // 是否收到激光数据
+
 protected:
-    ros::NodeHandle nh_;       // ros节点
+    ros::NodeHandle nh_; // ros节点
+
     ros::Subscriber odom_sub_; // 订阅里程计
     ros::Subscriber scan_sub_; // 订阅激光雷达
     ros::Subscriber goal_sub_; // 订阅目标点
+
+    ros::Publisher cmd_pub_;    // 发布速度指令
+    ros::Publisher marker_pub_; // Marker发布器
 };

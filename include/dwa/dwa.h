@@ -20,12 +20,12 @@
 // 机器人参数配置
 struct RobotParams
 {
-    double max_v = 0.5;            // 最大线速度 (m/s)
+    double max_v = 0.3;            // 最大线速度 (m/s)
     double min_v = 0.0;            // 最小线速度 (m/s，支持倒车)
-    double max_omega = 2.0;        // 最大角速度 (rad/s)
-    double min_omega = -2.0;       // 最小角速度 (rad/s)
-    double max_acc_v = 0.2;        // 最大线加速度 (m/s²)
-    double max_acc_omega = 1.0;    // 最大角加速度 (rad/s²)
+    double max_omega = 1.0;        // 最大角速度 (rad/s)
+    double min_omega = -1.0;       // 最小角速度 (rad/s)
+    double max_acc_v = 0.1;        // 最大线加速度 (m/s²)
+    double max_acc_omega = 0.5;    // 最大角加速度 (rad/s²)
     double dt = 0.1;               // 控制周期 (s)
     double predict_time = 1.0;     // 预测时域 (s)
     double safe_dist = 0.3;        // 安全距离 (m)
@@ -94,17 +94,6 @@ private:
     // 停止机器人
     void stopRobot();
 
-    // PID相关
-    // 设置目标值
-    void setTarget(double target);
-    // 设置PID参数
-    void setParams(double kp, double ki, double kd);
-    // 设置输出限制
-    void setOutputLimit(double limit);
-    double getError(); // 获取误差
-    // 计算PID输出（输入当前值，返回控制量）
-    double compute(double current, float dt);
-
     Pose current_pose_;                                          // 当前位姿
     Velocity current_vel_;                                       // 当前速度
     Pose goal_;                                                  // 目标位姿
@@ -118,15 +107,6 @@ private:
     bool has_scan_ = false; // 是否收到激光数据
     bool has_goal_ = false; // 是否收到目标点
     bool has_path_ = false; // 是否收到路径点
-
-    // PID相关
-    double kp_, ki_, kd_; // 比例、积分、微分系数
-    double target_;       // 目标值
-    double error_;        // 当前误差
-    double integral_;     // 积分项
-    double derivative_;   // 微分项
-    double last_error_;   // 上一时刻误差
-    double output_limit_; // 输出限幅
 
     geometry_msgs::PoseStamped current_position_; // 当前位姿消息
 

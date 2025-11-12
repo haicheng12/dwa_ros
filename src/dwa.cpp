@@ -44,6 +44,8 @@ void DWA::odomCallback(const nav_msgs::Odometry::ConstPtr &msg)
     current_vel_.v = msg->twist.twist.linear.x;
     current_vel_.omega = msg->twist.twist.angular.z;
 
+    current_position_.pose = msg->pose.pose;
+
     // std::cout << "当前状态 = " << current_pose_.x << " " << current_pose_.y << " " << current_pose_.theta << " " << current_vel_.v << " " << current_vel_.omega << std::endl;
 }
 
@@ -74,7 +76,7 @@ void DWA::goalCallback(const geometry_msgs::PoseStamped::ConstPtr &msg)
 
     has_goal_ = true;
 
-    // ROS_INFO("收到目标点: (%.2f, %.2f, %.2f°)", goal_.x, goal_.y, goal_.theta * 180 / M_PI);
+    std::cout << "收到目标点: " << goal_.x << " " << goal_.y << " " << goal_.theta << std::endl;
 }
 
 // 路径回调：接收全局路径
@@ -129,32 +131,7 @@ Velocity DWA::solve(const Pose &current_pose, const Velocity &current_vel,
         // 预测轨迹
         std::vector<Pose> traj = predictTrajectory(current_pose, vel); // 11个点
 
-        // 发布显示其中一条轨迹
-        visualization_msgs::Marker marker;
-        marker.header.frame_id = "map";
-        marker.header.stamp = ros::Time::now();
-        marker.ns = "line_strip";
-        marker.id = i;
-        marker.type = visualization_msgs::Marker::LINE_STRIP; // 类型：折线
-        marker.action = visualization_msgs::Marker::ADD;
-        marker.pose.orientation.w = 1.0;
-        marker.scale.x = 0.001;
-        // 颜色
-        marker.color.r = 0.0;
-        marker.color.g = 1.0;
-        marker.color.b = 0.0;
-        marker.color.a = 1.0;
-        // 填充线的点数据（按顺序连接）
-        for (int j = 0; j < traj.size(); ++j)
-        {
-            geometry_msgs::Point pt;
-            pt.x = traj[j].x;
-            pt.y = traj[j].y;
-            pt.z = 0.0;
-            marker.points.push_back(pt);
-        }
-        marker.lifetime = ros::Duration(0);
-        marker_pub_.publish(marker); // 预测轨迹发布显示
+        pubTrajectory(traj, i); // 发布轨迹
 
         // 评价轨迹得分
         double score = evaluateTrajectory(traj, goal, obstacles);
@@ -245,7 +222,7 @@ double DWA::evaluateTrajectory(const std::vector<Pose> &trajectory, const Pose &
                                const std::vector<Obstacle> &obstacles)
 {
     // 权重配置（可通过实验调优）
-    double w_heading = 2.0; // 朝向权重
+    double w_heading = 1.0; // 朝向权重
     double w_dist = 1.0;    // 避障距离权重
     double w_vel = 1.0;     // 速度权重
 
@@ -253,8 +230,9 @@ double DWA::evaluateTrajectory(const std::vector<Pose> &trajectory, const Pose &
     Pose end_pose = trajectory.back();
     double goal_theta = atan2(goal.y - end_pose.y, goal.x - end_pose.x);
     double heading_err = fabs(end_pose.theta - goal_theta);
+    // std::cout << "heading_err = " << heading_err << std::endl; // 0.1 多条轨迹的朝向偏差
     double heading_cost = 1.0 - heading_err / M_PI; // 得分0~1
-    std::cout << "朝向评价 = " << heading_cost << std::endl;
+    // std::cout << "朝向评价 = " << heading_cost << std::endl;
 
     // 4.2 避障距离评价（轨迹与障碍物的最小距离）
     // double min_dist = 1e9;
@@ -273,64 +251,230 @@ double DWA::evaluateTrajectory(const std::vector<Pose> &trajectory, const Pose &
 
     // 4.3 速度评价（线速度接近最大速度的程度）
     double vel = (sqrt(pow(trajectory.back().x - trajectory.front().x, 2) + pow(trajectory.back().y - trajectory.front().y, 2))) / params_.predict_time; // 提取线速度
-    std::cout << "vel = " << vel << std::endl;
+    // std::cout << "vel = " << vel << std::endl;
     // double vel_cost = vel / params_.max_v; // 得分0~1
     double vel_cost = std::max(0.0, vel) / params_.max_v; // 正向速度优先
-    std::cout << "速度评价 = " << vel_cost << std::endl;
+    // std::cout << "速度评价 = " << vel_cost << std::endl;
     // vel_cost_data_ = vel_cost;
 
     // 总得分（加权求和）
     double all_cost = heading_cost * w_heading + vel_cost * w_vel;
-    std::cout << "总评价 = " << all_cost << std::endl;
+    // std::cout << "总评价 = " << all_cost << std::endl;
 
     return all_cost;
+}
+
+void DWA::pubTrajectory(const std::vector<Pose> &trajectory, const int &num) // 发布轨迹
+{
+    // 发布显示其中一条轨迹
+    visualization_msgs::Marker marker;
+    marker.header.frame_id = "map";
+    marker.header.stamp = ros::Time::now();
+    marker.ns = "line_strip";
+    marker.id = num;
+    marker.type = visualization_msgs::Marker::LINE_STRIP; // 类型：折线
+    marker.action = visualization_msgs::Marker::ADD;
+    marker.pose.orientation.w = 1.0;
+    marker.scale.x = 0.001;
+    // 颜色
+    marker.color.r = 0.0;
+    marker.color.g = 1.0;
+    marker.color.b = 0.0;
+    marker.color.a = 1.0;
+    // 填充线的点数据（按顺序连接）
+    for (int i = 0; i < trajectory.size(); ++i)
+    {
+        geometry_msgs::Point pt;
+        pt.x = trajectory[i].x;
+        pt.y = trajectory[i].y;
+        pt.z = 0.0;
+        marker.points.push_back(pt);
+    }
+    marker.lifetime = ros::Duration(0);
+    marker_pub_.publish(marker); // 预测轨迹发布显示
+}
+
+// 启动机器人
+void DWA::runRobot(double v, double omega)
+{
+    geometry_msgs::Twist cmd;
+    cmd.linear.x = v;
+    cmd.angular.z = omega;
+    cmd_pub_.publish(cmd);
+}
+
+// 停止机器人
+void DWA::stopRobot()
+{
+    geometry_msgs::Twist cmd;
+    cmd.linear.x = 0.0;
+    cmd.angular.z = 0.0;
+    cmd_pub_.publish(cmd);
+}
+
+// PID相关
+// 设置目标值
+void DWA::setTarget(double target)
+{
+    target_ = target;
+
+    integral_ = 0; // 重置积分项（避免累积误差）
+}
+
+// 设置PID参数
+void DWA::setParams(double kp, double ki, double kd)
+{
+    kp_ = kp;
+    ki_ = ki;
+    kd_ = kd;
+}
+
+// 设置输出限制
+void DWA::setOutputLimit(double limit)
+{
+    output_limit_ = limit;
+}
+
+// 获取误差
+double DWA::getError()
+{
+    return error_;
+}
+
+// 计算PID输出（输入当前值，返回控制量）
+double DWA::compute(double current, float dt)
+{
+    if (dt <= 0)
+        return 0; // 避免除以零
+
+    // 计算当前误差
+    last_error_ = error_;
+    error_ = target_ - current;
+
+    // 积分项（带抗积分饱和）
+    integral_ += error_ * dt;
+    // 积分限幅：当输出达到上限时，停止积分累积
+    if (fabs(output_limit_) > 1e-6)
+    {
+        double integral_max = output_limit_ / ki_;
+        integral_ = std::max(-integral_max, std::min(integral_, integral_max));
+    }
+
+    // 微分项（用差分近似）
+    derivative_ = (error_ - last_error_) / dt;
+
+    // 计算输出并限幅
+    double output = kp_ * error_ + ki_ * integral_ + kd_ * derivative_;
+    return std::max(-output_limit_, std::min(output, output_limit_));
 }
 
 // 主循环
 void DWA::run()
 {
+    // 串级PID控制器
+    DWA outer_pid_; // 外环：角度环（输出目标角速度）
+    DWA inner_pid_; // 内环：角速度环（输出角加速度/轮速差）
+
+    // 初始化PID参数（需根据实际机器人调优）
+    // 外环：角度环（kp=2.0, ki=0.1, kd=0.5，输出限幅±2.0rad/s）
+    outer_pid_.setParams(2.0, 0.1, 0.5);
+    outer_pid_.setOutputLimit(2.0);
+
+    // 内环：角速度环（kp=1.5, ki=0.3, kd=0.1，输出限幅±0.5m/s²（轮速差））
+    inner_pid_.setParams(1.5, 0.3, 0.1);
+    inner_pid_.setOutputLimit(0.5);
+
     int index = 0;
-    geometry_msgs::Twist cmd; // 速度控制指令
+
+    ros::Time current_time, last_time; // 当前时间，上一刻时间
+    current_time = ros::Time::now();
+    last_time = ros::Time::now();
+
+    float dt = 0.0; // 采样时间
+
+    double target_yaw = 0.0; // 朝向角度
 
     ros::Rate rate(10); // 控制频率
     while (ros::ok())
     {
         if (has_goal_) // 接收到目标点
         {
-            // 求解DWA得到最优速度
-            Velocity optimal_vel = solve(current_pose_, current_vel_, goal_, obstacles_);
+            current_time = ros::Time::now();
 
-            // 执行速度指令，更新当前状态
-            current_pose_.x += optimal_vel.v * cos(current_pose_.theta) * params_.dt;
-            current_pose_.y += optimal_vel.v * sin(current_pose_.theta) * params_.dt;
-            current_pose_.theta += optimal_vel.omega * params_.dt;
-            current_vel_ = optimal_vel;
-            // 输出信息
-            // std::cout << "最优速度 v=" << optimal_vel.v
-            //           << ", omega=" << optimal_vel.omega
-            //           << " | 当前位姿 (" << current_pose_.x << "," << current_pose_.y << ")" << std::endl;
+            dt = (current_time - last_time).toSec(); // 时间间隔
+                                                     // std::cout << "dt = " << dt << std::endl;
 
-            cmd.linear.x = optimal_vel.v;
-            cmd.angular.z = optimal_vel.omega;
-            std::cout << "速度 = " << cmd.linear.x << " " << cmd.angular.z << std::endl;
-            cmd_pub_.publish(cmd); // 发布速度指令
+            // 纯跟踪算法计算跟踪曲率
+            double cal_rpy = tf::getYaw(current_position_.pose.orientation);
+            // std::cout << "cal_rpy " << cal_rpy << std::endl;
+            double alpha = atan2(goal_.y - current_position_.pose.position.y, goal_.x - current_position_.pose.position.x) - cal_rpy;
+            // std::cout << "alpha " << alpha << std::endl;
+            double curvature_k = 2 * sin(alpha) / params_.wheel_base; // 跟踪曲率 k = 2 * sin(a) / Ld
+            // std::cout << "curvature_k " << curvature_k << std::endl;
+            // double k_cost = atan2(sin(curvature_k), cos(curvature_k)); // 归一化得分0~1
+            // std::cout << "k_cost " << k_cost << std::endl;
 
-            // 检查是否到达目标（距离阈值0.2m）
-            double dist_to_goal = sqrt(pow(current_pose_.x - goal_.x, 2) + pow(current_pose_.y - goal_.y, 2));
-            // std::cout << "dist_to_goal = " << dist_to_goal << std::endl;
-            if (dist_to_goal < 0.2)
+            // 根据曲率对准目标点
+            double vel_theta = 0.2 * curvature_k;
+            runRobot(0.0, vel_theta); // 启动机器人
+            if (curvature_k < 0.05)   // 瞄准好之后发送速度
             {
-                std::cout << "到达目标点！" << std::endl;
+                // 求解DWA得到最优速度
+                Velocity optimal_vel = solve(current_pose_, current_vel_, goal_, obstacles_);
 
-                cmd.linear.x = 0.0;
-                cmd.angular.z = 0.0;
-                // std::cout << "速度 = " << cmd.linear.x << " " << cmd.angular.z << std::endl;
-                cmd_pub_.publish(cmd); // 发布速度指令
+                // 执行速度指令，更新当前状态
+                current_pose_.x += optimal_vel.v * cos(current_pose_.theta) * params_.dt;
+                current_pose_.y += optimal_vel.v * sin(current_pose_.theta) * params_.dt;
+                current_pose_.theta += optimal_vel.omega * params_.dt;
+                current_vel_ = optimal_vel;
+
+                runRobot(optimal_vel.v, optimal_vel.omega); // 启动机器人
+
+                // 检查是否到达目标（距离阈值0.2m）
+                double dist_to_goal = sqrt(pow(current_pose_.x - goal_.x, 2) + pow(current_pose_.y - goal_.y, 2));
+                // std::cout << "dist_to_goal = " << dist_to_goal << std::endl;
+                if (dist_to_goal < params_.goal_dist_thresh) // 到目标位置的阈值
+                {
+                    std::cout << "到达目标点！" << std::endl;
+                    stopRobot(); // 停止机器人
+
+                    // // 1.设置目标旋转角度
+                    // outer_pid_.setTarget(goal_.theta);
+                    // std::cout << "开始旋转到目标角度: " << goal_.theta << std::endl;
+
+                    // // 这里开始旋转对准目标点
+                    // // 2. 外环PID（角度环）：计算目标角速度
+                    // double target_omega = outer_pid_.compute(current_pose_.theta, dt);
+                    // // 3. 内环PID（角速度环）：计算轮速差（转化为角速度控制量）
+                    // double omega_cmd = inner_pid_.compute(current_vel_.omega, dt);
+                    // // 4. 检查是否到达目标角度
+                    // double angle_error = outer_pid_.getError(); // 获取外环误差
+
+                    // if (fabs(angle_error) < params_.angle_tolerance) // 到目标角度阀值
+                    // {
+                    //     stopRobot();       // 停止机器人
+                    //     has_goal_ = false; // 旋转完成，重置目标标志
+
+                    //     std::cout << "旋转完成！当前角度:" << current_pose_.theta << "误差:" << angle_error << std::endl;
+                    // }
+
+                    // // 5. 发布速度指令（仅旋转，线速度为0）
+                    // runRobot(0.0, omega_cmd);
+
+                    // // 调试信息
+                    // std::cout << "角度误差:" << angle_error << ",目标角速度: " << target_omega << ",当前角速度:" << current_vel_.omega << ",输出指令:" << omega_cmd << std::endl;
+                }
             }
+
+            last_time = current_time;
         }
 
         // if (has_path_) // 接收到路径点
         // {
+        //     current_time = ros::Time::now();
+        //     dt = (current_time - last_time).toSec(); // 时间间隔
+        //     // std::cout << "dt = " << dt << std::endl;
+
         //     // std::cout << "size = " << coverage_path_.size() << std::endl; // 11
         //     // for (int i = 0; i < coverage_path_.size(); ++i)
         //     // {
@@ -345,53 +489,56 @@ void DWA::run()
         //     // 打印点
         //     // std::cout << "位置 = " << goal_x << " " << goal_y << std::endl;
 
-        //     Pose current_goal;
-        //     current_goal.x = goal_x;
-        //     current_goal.y = goal_y;
+        //     // 纯跟踪算法计算跟踪曲率
+        //     double cal_rpy = tf::getYaw(current_position_.pose.orientation);
+        //     // std::cout << "cal_rpy " << cal_rpy << std::endl;
+        //     double alpha = atan2(goal_y - current_position_.pose.position.y, goal_x - current_position_.pose.position.x) - cal_rpy;
+        //     // std::cout << "alpha " << alpha << std::endl;
+        //     double curvature_k = 2 * sin(alpha) / params_.wheel_base; // 跟踪曲率 k = 2 * sin(a) / Ld
+        //     std::cout << "curvature_k " << curvature_k << std::endl;
 
-        //     // 求解DWA得到最优速度
-        //     Velocity optimal_vel = solve(current_pose_, current_vel_, current_goal, obstacles_);
-
-        //     // 执行速度指令，更新当前状态
-        //     current_pose_.x += optimal_vel.v * cos(current_pose_.theta) * params_.dt;
-        //     current_pose_.y += optimal_vel.v * sin(current_pose_.theta) * params_.dt;
-        //     current_pose_.theta += optimal_vel.omega * params_.dt;
-        //     current_vel_ = optimal_vel;
-
-        //     if (vel_cost_data_ < 0.05)
+        //     // 根据曲率对准目标点
+        //     double vel_theta = 0.2 * curvature_k;
+        //     runRobot(0.0, vel_theta); // 启动机器人
+        //     if (curvature_k < 0.1)    // 瞄准好之后发送速度
         //     {
-        //         cmd.linear.x = 0.3;
-        //     }
-        //     else
-        //     {
-        //         cmd.linear.x = optimal_vel.v;
-        //     }
-        //     cmd.angular.z = optimal_vel.omega;
-        //     std::cout << "速度 = " << cmd.linear.x << " " << cmd.angular.z << std::endl;
-        //     cmd_pub_.publish(cmd); // 发布速度指令
+        //         Pose current_goal;
+        //         current_goal.x = goal_x;
+        //         current_goal.y = goal_y;
+        //         current_goal.theta = 0.0;
 
-        //     std::cout << "index = " << index << std::endl;
+        //         // 求解DWA得到最优速度
+        //         Velocity optimal_vel = solve(current_pose_, current_vel_, current_goal, obstacles_);
 
-        //     // 检查是否到达目标（距离阈值0.2m）
-        //     double dist_to_goal = sqrt(pow(current_pose_.x - current_goal.x, 2) + pow(current_pose_.y - current_goal.y, 2));
-        //     // std::cout << "dist_to_goal = " << dist_to_goal << std::endl;
-        //     if (dist_to_goal < 0.2)
-        //     {
-        //         std::cout << "去下一个目标点！" << std::endl;
-        //         ++index;
+        //         // 执行速度指令，更新当前状态
+        //         current_pose_.x += optimal_vel.v * cos(current_pose_.theta) * params_.dt;
+        //         current_pose_.y += optimal_vel.v * sin(current_pose_.theta) * params_.dt;
+        //         current_pose_.theta += optimal_vel.omega * params_.dt;
+        //         current_vel_ = optimal_vel;
 
-        //         if (index == coverage_path_.size() - 1)
+        //         runRobot(optimal_vel.v, optimal_vel.omega); // 启动机器人
+
+        //         std::cout << "index = " << index << std::endl;
+
+        //         // 检查是否到达目标（距离阈值0.2m）
+        //         double dist_to_goal = sqrt(pow(current_pose_.x - current_goal.x, 2) + pow(current_pose_.y - current_goal.y, 2));
+        //         // std::cout << "dist_to_goal = " << dist_to_goal << std::endl;
+        //         if (dist_to_goal < 0.3) // 到目标位置的阈值
         //         {
-        //             std::cout << "到达终点！" << std::endl;
+        //             std::cout << "去下一个目标点！" << std::endl;
+        //             ++index;
 
-        //             index = 0;
+        //             if (index == coverage_path_.size())
+        //             {
+        //                 std::cout << "到达终点！" << std::endl;
 
-        //             cmd.linear.x = 0.0;
-        //             cmd.angular.z = 0.0;
-        //             std::cout << "速度 = " << cmd.linear.x << " " << cmd.angular.z << std::endl;
-        //             cmd_pub_.publish(cmd); // 发布速度指令
+        //                 index = 0; // 重复清扫
+        //                 // stopRobot(); // 停止机器人
+        //             }
         //         }
         //     }
+
+        //     last_time = current_time;
         // }
 
         rate.sleep();

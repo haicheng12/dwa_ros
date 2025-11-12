@@ -26,11 +26,12 @@ struct RobotParams
     double min_omega = -2.0;       // 最小角速度 (rad/s)
     double max_acc_v = 0.2;        // 最大线加速度 (m/s²)
     double max_acc_omega = 1.0;    // 最大角加速度 (rad/s²)
-    double wheel_base = 0.2;       // 轮间距 (m)
     double dt = 0.1;               // 控制周期 (s)
     double predict_time = 1.0;     // 预测时域 (s)
     double safe_dist = 0.3;        // 安全距离 (m)
+    double wheel_base = 0.37;      // 轮间距 (m)
     double goal_dist_thresh = 0.2; // 到达目标的距离阈值 (m)
+    double angle_tolerance = 0.02; // 角度控制容忍度 (rad)
 };
 
 // 位姿结构体 (x, y坐标，航向角theta)
@@ -77,6 +78,7 @@ private:
     // 4. 评价函数（多维度打分，权重可调）
     double evaluateTrajectory(const std::vector<Pose> &trajectory, const Pose &goal,
                               const std::vector<Obstacle> &obstacles);
+    void pubTrajectory(const std::vector<Pose> &trajectory, const int &num); // 发布轨迹
 
     // 里程计回调：更新当前位姿与速度
     void odomCallback(const nav_msgs::Odometry::ConstPtr &msg);
@@ -87,6 +89,22 @@ private:
     // 路径回调：接收全局路径
     void pathCallback(const nav_msgs::Path::ConstPtr &msg);
 
+    // 启动机器人
+    void runRobot(double v, double omega);
+    // 停止机器人
+    void stopRobot();
+
+    // PID相关
+    // 设置目标值
+    void setTarget(double target);
+    // 设置PID参数
+    void setParams(double kp, double ki, double kd);
+    // 设置输出限制
+    void setOutputLimit(double limit);
+    double getError(); // 获取误差
+    // 计算PID输出（输入当前值，返回控制量）
+    double compute(double current, float dt);
+
     Pose current_pose_;                                          // 当前位姿
     Velocity current_vel_;                                       // 当前速度
     Pose goal_;                                                  // 目标位姿
@@ -95,12 +113,22 @@ private:
     RobotParams params_; // 机器人参数
 
     std::vector<Pose> coverage_path_; // 全局路径
-
-    double vel_cost_data_ = 0.0;
+    double goal_yaw_ = 0.0;
 
     bool has_scan_ = false; // 是否收到激光数据
     bool has_goal_ = false; // 是否收到目标点
     bool has_path_ = false; // 是否收到路径点
+
+    // PID相关
+    double kp_, ki_, kd_; // 比例、积分、微分系数
+    double target_;       // 目标值
+    double error_;        // 当前误差
+    double integral_;     // 积分项
+    double derivative_;   // 微分项
+    double last_error_;   // 上一时刻误差
+    double output_limit_; // 输出限幅
+
+    geometry_msgs::PoseStamped current_position_; // 当前位姿消息
 
 protected:
     ros::NodeHandle nh_; // ros节点

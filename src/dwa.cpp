@@ -357,6 +357,8 @@ void DWA::run()
                 {
                     std::cout << "到达目标点！" << std::endl;
                     stopRobot(); // 停止机器人
+
+                    has_goal_ = false;
                 }
             }
         }
@@ -383,7 +385,7 @@ void DWA::run()
             double alpha = atan2(goal_y - current_position_.pose.position.y, goal_x - current_position_.pose.position.x) - cal_rpy;
             // std::cout << "alpha " << alpha << std::endl;
             double curvature_k = 2 * sin(alpha) / params_.wheel_base; // 跟踪曲率 k = 2 * sin(a) / Ld
-            std::cout << "curvature_k " << curvature_k << std::endl;
+            // std::cout << "curvature_k " << curvature_k << std::endl;
 
             // 根据曲率对准目标点
             double vel_theta = 0.2 * curvature_k;
